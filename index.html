@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lista de Socios</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        #dataInput {
+            width: 100%;
+            min-height: 150px;
+            margin-bottom: 10px;
+            font-family: monospace;
+        }
+        th {
+            cursor: pointer;
+        }
+        .sub-row td {
+            padding-left: 2rem !important;
+            border-left: 3px solid #0d6efd;
+        }
+        [contenteditable="true"] {
+            background-color: #f8f9fa;
+            cursor: text;
+        }
+        [contenteditable="true"]:hover, [contenteditable="true"]:focus {
+            background-color: #e9ecef;
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lista de Socios</h1>
+
+        <h2>Agregar Nuevos Socios</h2>
+        <p>Pega aquí el bloque de datos. Las líneas deben estar separadas por punto y coma (<code>;</code>).</p>
+        <textarea id="dataInput" class="form-control" placeholder="Pega aquí el bloque de datos..."></textarea>
+        <div class="mt-2">
+            <button id="addButton" class="btn btn-primary">Agregar Socio</button>
+            <button id="dateButton" class="btn btn-secondary">Cambiar Fecha de Llegada</button>
+            <span class="ms-3">Fecha de Llegada actual: <strong id="currentDateDisplay"></strong></span>
+        </div>
+
+        <h2 class="mt-4">Socios Actuales</h2>
+        <div class="table-responsive">
+            <table id="sociosTable" class="table table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th>ZMGR</th>
+                        <th>Numero de Membresia</th>
+                        <th>Nombre</th>
+                        <th>Estatus</th>
+                        <th>Periodo</th>
+                        <th>Noches</th>
+                        <th>País</th>
+                        <th>Tipo de Membresia</th>
+                        <th>Pax</th>
+                        <th>Tipo de Habitacion</th>
+                        <th>RC</th>
+                        <th>Notas</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Las filas se añadirán aquí dinámicamente -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Modal para la Fecha de Llegada -->
+    <div class="modal fade" id="dateModal" tabindex="-1" aria-labelledby="dateModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="dateModalLabel">Seleccionar Fecha de Llegada</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <form>
+              <div class="mb-3">
+                <label for="arrivalDateInput" class="form-label">Fecha de Llegada</label>
+                <input type="date" class="form-control" id="arrivalDateInput">
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="saveDateButton">Guardar Fecha</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const addButton = document.getElementById('addButton');
+            const dateButton = document.getElementById('dateButton');
+            const currentDateDisplay = document.getElementById('currentDateDisplay');
+            const dataInput = document.getElementById('dataInput');
+            const tableBody = document.querySelector('#sociosTable tbody');
+            const zmgr_ids = new Set();
+
+            const dateModal = new bootstrap.Modal(document.getElementById('dateModal'));
+            const saveDateButton = document.getElementById('saveDateButton');
+            const arrivalDateInput = document.getElementById('arrivalDateInput');
+            
+            let last_arrival_date = new Date();
+
+            function update_date_display() {
+                currentDateDisplay.textContent = last_arrival_date.toLocaleDateString('es-MX');
+                arrivalDateInput.value = last_arrival_date.toISOString().split('T')[0];
+            }
+
+            function intelligent_parser(record) {
+                const values = record.split('\t');
+                const estatus_keywords = ['Owner', 'Guest', 'Referral', 'Beneficiary', 'VIP', 'Regular', 'Trial'];
+                const membresia_keywords = ['Exit C', 'Trial', 'Vip Silver', 'Jacuzzi Elite', 'Exit', 'VIP', 'Regular'];
+                let estatus = '';
+                let estatus_index = -1;
+                for (const keyword of estatus_keywords) {
+                    let index = values.lastIndexOf(keyword);
+                    if (index > estatus_index) {
+                        estatus = keyword;
+                        estatus_index = index;
+                    }
+                }
+                let nombre_parts = [];
+                if (estatus_index > 0) {
+                    let i = estatus_index - 1;
+                    while (i >= 0) {
+                        const val = values[i];
+                        if (val) {
+                            if (/^\d+$/.test(val) || membresia_keywords.includes(val)) {
+                                break;
+                            }
+                            nombre_parts.unshift(val);
+                        }
+                        i--;
+                    }
+                }
+                const date_regex = /\d{1,2}\/\d{1,2}\/\d{4}/;
+                let fecha_salida = (record.match(date_regex) || [''])[0];
+                let tipo_membresia = '';
+                for (const keyword of membresia_keywords) {
+                    if (record.includes(keyword)) {
+                        tipo_membresia = keyword;
+                        break;
+                    }
+                }
+                let tipo_habitacion_parts = [];
+                let th_code_index = values.findIndex((v, i) => v.match(/^[A-Z]{3}$/) && values[i + 1] && values[i + 1].includes(' '));
+                if (th_code_index > -1) {
+                    tipo_habitacion_parts.push(values[th_code_index]);
+                    tipo_habitacion_parts.push(values[th_code_index + 1]);
+                }
+                return {
+                    zmgr: values.find(v => v.match(/^18\d{6}$/)) || '',
+                    numero_membresia: values.find(v => v.match(/^(4|5)\d{6}$/)) || '',
+                    nombre: nombre_parts.join(' '),
+                    estatus: estatus,
+                    fecha_salida: fecha_salida,
+                    pais: values.find(v => v === 'US' || v === 'MX') || '',
+                    tipo_membresia: tipo_membresia,
+                    pax: values.find(v => v.match(/^\d\.\d$/)) || '',
+                    tipo_habitacion: tipo_habitacion_parts.join(' ')
+                };
+            }
+
+            function add_row_to_table(data, arrival_date) {
+                if (!data.zmgr) {
+                    alert('Error: No se pudo identificar el ZMGR en los datos. No se puede agregar la fila.');
+                    return;
+                }
+                if (zmgr_ids.has(data.zmgr)) {
+                    alert(`Error: El socio con ZMGR ${data.zmgr} ya existe en la tabla.`);
+                    return;
+                }
+
+                const newRow = document.createElement('tr');
+                newRow.dataset.membershipId = data.numero_membresia;
+
+                const departure_date = new Date(data.fecha_salida);
+                let nights = 'N/A';
+                if (!isNaN(arrival_date) && !isNaN(departure_date)) {
+                    nights = Math.ceil((departure_date - arrival_date) / (1000 * 3600 * 24));
+                }
+                const periodo_str = `${arrival_date.toLocaleDateString('es-MX')} - ${data.fecha_salida}`;
+
+                newRow.insertCell().textContent = data.zmgr;
+                newRow.insertCell().textContent = data.numero_membresia;
+                newRow.insertCell().textContent = data.nombre;
+                newRow.insertCell().textContent = data.estatus;
+                newRow.insertCell().textContent = periodo_str;
+                newRow.insertCell().textContent = nights;
+                newRow.insertCell().textContent = data.pais;
+                newRow.insertCell().textContent = data.tipo_membresia;
+                newRow.insertCell().textContent = data.pax;
+                newRow.insertCell().textContent = data.tipo_habitacion.trim();
+                
+                const rc_cell = newRow.insertCell();
+                rc_cell.contentEditable = true;
+
+                const notas_cell = newRow.insertCell();
+                notas_cell.contentEditable = true;
+                
+                const delete_button = document.createElement('button');
+                delete_button.textContent = 'Eliminar';
+                delete_button.className = 'btn btn-danger btn-sm';
+                delete_button.onclick = function() {
+                    const row = this.closest('tr');
+                    zmgr_ids.delete(row.cells[0].textContent);
+                    row.remove();
+                };
+                newRow.insertCell().appendChild(delete_button);
+
+                const existing_group_rows = tableBody.querySelectorAll(`[data-membership-id="${data.numero_membresia}"]`);
+                if (existing_group_rows.length > 0) {
+                    const first_row_in_group = existing_group_rows[0];
+                    const last_row_in_group = existing_group_rows[existing_group_rows.length - 1];
+                    if (data.estatus === 'Owner') {
+                        newRow.classList.remove('sub-row');
+                        first_row_in_group.classList.add('sub-row');
+                        tableBody.insertBefore(newRow, first_row_in_group);
+                    } else {
+                        newRow.classList.add('sub-row');
+                        last_row_in_group.after(newRow);
+                    }
+                } else {
+                    tableBody.insertBefore(newRow, tableBody.firstChild);
+                }
+
+                zmgr_ids.add(data.zmgr);
+            }
+
+            addButton.addEventListener('click', function() {
+                const all_records = dataInput.value.trim().split(';');
+                const first_record = all_records.shift();
+                if (!first_record) {
+                    alert('No hay más datos para procesar.');
+                    return;
+                }
+                try {
+                    const data = intelligent_parser(first_record);
+                    add_row_to_table(data, last_arrival_date);
+                    dataInput.value = all_records.map(r => r.trim()).join('; \n');
+                } catch (e) {
+                    alert('Ocurrió un error al analizar los datos. Por favor, verifica que el formato sea correcto.\n\nError: ' + e.message);
+                }
+            });
+
+            dateButton.addEventListener('click', function() {
+                dateModal.show();
+            });
+
+            saveDateButton.addEventListener('click', function() {
+                const arrival_date_str = arrivalDateInput.value;
+                if (!arrival_date_str) {
+                    alert('La fecha de llegada es obligatoria.');
+                    return;
+                }
+                last_arrival_date = new Date(arrival_date_str.replace(/-/g, '/'));
+                update_date_display();
+                dateModal.hide();
+            });
+
+            update_date_display();
+
+            // Código de ordenamiento de tabla sin cambios...
+            document.querySelectorAll('#sociosTable thead th').forEach(headerCell => {
+                headerCell.addEventListener('click', () => {
+                    const table = headerCell.closest('table');
+                    const columnIndex = headerCell.cellIndex;
+                    const isAscending = headerCell.classList.contains('sorted-asc');
+                    sort_table_by_column(table, columnIndex, !isAscending);
+                });
+            });
+
+            function sort_table_by_column(table, column, asc = true) {
+                const dir_modifier = asc ? 1 : -1;
+                const t_body = table.tBodies[0];
+                const rows = Array.from(t_body.querySelectorAll('tr'));
+                const sorted_rows = rows.sort((a, b) => {
+                    const a_col_text = a.querySelector(`td:nth-child(${column + 1})`).textContent.trim();
+                    const b_col_text = b.querySelector(`td:nth-child(${column + 1})`).textContent.trim();
+                    return a_col_text.localeCompare(b_col_text, undefined, {numeric: true}) * dir_modifier;
+                });
+                while (t_body.firstChild) {
+                    t_body.removeChild(t_body.firstChild);
+                }
+                t_body.append(...sorted_rows);
+                table.querySelectorAll('th').forEach(th => th.classList.remove('sorted-asc', 'sorted-desc'));
+                table.querySelector(`th:nth-child(${column + 1})`).classList.toggle(asc ? 'sorted-asc' : 'sorted-desc');
+            }
+        });
+    </script>
+</body>
+</html>
